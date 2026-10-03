@@ -22,3 +22,4 @@ scoops:
       token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
     homepage: https://github.com/ericksonis/sshync
     description: Manage and sync your OpenSSH client config
+    license: MIT

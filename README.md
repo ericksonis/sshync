@@ -97,3 +97,7 @@ Tests set `SSHYNC_SSH_DIR` to a temp directory, so they never touch your real `~
 Push a tag such as `v0.1.0`. The `release` workflow runs the tests, then goreleaser builds the binaries, creates the GitHub release,
 and commits `sshync.json` to [ericksonis/scoop-bucket](https://github.com/ericksonis/scoop-bucket).
 That last step needs the `SCOOP_BUCKET_TOKEN` repository secret: a token that can push to the bucket repo.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
