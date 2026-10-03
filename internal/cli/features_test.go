@@ -72,14 +72,14 @@ func TestKeysAgent(t *testing.T) {
 		}, "\n"), nil
 	}
 	out, err := run(t, d, "keys", "agent")
-	if err == nil || !strings.Contains(out, "Work_Laptop.pub") {
+	if err == nil || !strings.Contains(out, "work-laptop.pub") {
 		t.Fatalf("non-interactive without --all should list and fail: %v\n%s", err, out)
 	}
 	must(t, d, "keys", "agent", "--all")
 	keys := filepath.Join(d, "sshync", "repo", "keys")
 	for name, want := range map[string]string{
-		"Work_Laptop.pub":   "WorkWork",
-		"Work_Laptop-2.pub": "OtherOther",
+		"work-laptop.pub":   "WorkWork",
+		"work-laptop-2.pub": "OtherOther",
 		"rsa-12345678.pub":  "NoComment",
 		"existing.pub":      "Example",
 	} {
@@ -200,5 +200,20 @@ func TestPickerFilter(t *testing.T) {
 	m.Update(keyMsg("i"))
 	if strings.Contains(readFile(t, filepath.Join(d, "sshync", "repo", "hosts.d", "alpha.conf")), "IdentitiesOnly") {
 		t.Error("key typed into the filter triggered a toggle")
+	}
+}
+
+func TestKeySlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"SSH Key - GUILE":                "ssh-key-guile",
+		"SSH Key - oob.aero.erickson.is": "ssh-key-oob.aero.erickson.is",
+		"Grow BI Jump Host SSH Key":      "grow-bi-jump-host-ssh-key",
+		"  Observium - Telmanager  ":     "observium-telmanager",
+		"me@laptop.pub":                  "me-laptop",
+		"--- ":                           "",
+	} {
+		if got := keySlug(in); got != want {
+			t.Errorf("keySlug(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

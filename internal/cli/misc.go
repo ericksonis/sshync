@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/ericksonis/sshync/internal/gitsync"
 	"github.com/ericksonis/sshync/internal/sshconf"
-	"github.com/ericksonis/sshync/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -115,6 +114,25 @@ type agentKey struct{ name, line string }
 
 // newAgentKeys lists agent keys whose key material isn't already in the repo,
 // named after the key comment (Bitwarden uses the vault item name).
+// keySlug turns a key comment such as "SSH Key - GUILE" into "ssh-key-guile":
+// lowercase, runs of anything but letters, digits and dots become one hyphen.
+func keySlug(s string) string {
+	var b strings.Builder
+	hyphen := false
+	for _, r := range strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), ".pub")) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' {
+			if hyphen && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			hyphen = false
+			b.WriteRune(r)
+		} else {
+			hyphen = true
+		}
+	}
+	return strings.Trim(b.String(), ".")
+}
+
 func newAgentKeys(a *app, listing string) []agentKey {
 	have := map[string]bool{}
 	taken := map[string]bool{}
@@ -133,9 +151,9 @@ func newAgentKeys(a *app, listing string) []agentKey {
 			continue
 		}
 		have[f[1]] = true
-		base := strings.TrimSuffix(strings.TrimSuffix(store.FileName(strings.Join(f[2:], " ")), ".conf"), ".pub")
-		if base == "_" {
-			base = strings.TrimPrefix(f[0], "ssh-") + "-" + f[1][max(0, len(f[1])-8):]
+		base := keySlug(strings.Join(f[2:], " "))
+		if base == "" {
+			base = keySlug(strings.TrimPrefix(f[0], "ssh-") + "-" + f[1][max(0, len(f[1])-8):])
 		}
 		name := base + ".pub"
 		for i := 2; taken[strings.ToLower(name)]; i++ {
@@ -154,8 +172,9 @@ func keysAgentCmd(a *app) *cobra.Command {
 		Aliases: []string{"pull"},
 		Short:   "Add public keys from the running ssh-agent (e.g. Bitwarden) to the repo",
 		Long: `Reads public keys from the ssh-agent (ssh-add -L) and adds the ones not yet in
-the repo, named after each key's comment. Only public keys are ever read; the
-agent does not hand out private keys.`,
+the repo, named after each key's comment (lowercased, e.g. "SSH Key - GUILE" ->
+ssh-key-guile.pub). Only public keys are ever read; the agent does not hand out
+private keys.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			listing, err := agentKeys()
