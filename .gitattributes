@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# parser fixtures must keep their exact bytes (CRLF, missing final newline)
+internal/sshconf/testdata/** -text
