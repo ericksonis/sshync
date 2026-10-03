@@ -1,0 +1,24 @@
+version: 2
+project_name: sshync
+builds:
+  - main: ./cmd/sshync
+    binary: sshync
+    env: [CGO_ENABLED=0]
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X github.com/ericksonis/sshync/internal/cli.Version={{.Version}}"]
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+scoops:
+  - name: sshync
+    repository:
+      owner: ericksonis
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    homepage: https://github.com/ericksonis/sshync
+    description: Manage and sync your OpenSSH client config
