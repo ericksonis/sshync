@@ -119,56 +119,93 @@ func TestDoctorFix(t *testing.T) {
 }
 
 func keyMsg(s string) tea.KeyMsg {
-	if s == "enter" {
+	switch s {
+	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+o":
+		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
-func TestPicker(t *testing.T) {
+func newTestPicker(t *testing.T, search string, w, h int) (*picker, string) {
+	t.Helper()
 	setupEnv(t)
 	d := machine(t, sample)
 	must(t, d, "init")
 	t.Setenv("SSHYNC_SSH_DIR", d)
-	var out bytes.Buffer
-	a := &app{out: &out, errOut: &out}
+	a := &app{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}
 	if err := a.open(); err != nil {
 		t.Fatal(err)
 	}
-	m := newPicker(a, "")
-	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	if n := len(m.list.Items()); n != 2 {
-		t.Fatalf("items = %d", n)
+	m := newPicker(a, search)
+	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return m, d
+}
+
+func TestPicker(t *testing.T) {
+	m, d := newTestPicker(t, "", 120, 30)
+	if n := len(m.shown); n != 2 {
+		t.Fatalf("rows = %d", n)
 	}
-	if v := m.View(); !strings.Contains(v, "alpha.conf") || !strings.Contains(v, "HostName alpha.example.com") {
-		t.Errorf("detail pane missing:\n%s", v)
-	} else if w := lipgloss.Width(v); w > 120 || !strings.Contains(v, "F ForwardAgent") || !strings.Contains(v, "~/.ssh/sshync/repo/hosts.d/alpha.conf") {
-		t.Errorf("layout (width %d):\n%s", w, v)
+	v := m.View()
+	for _, want := range []string{"Alias", "HostName", "alpha.example.com", "bob", "2/2 hosts",
+		"~/.ssh/sshync/repo/hosts.d/alpha.conf", "ctrl+d delete"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("view missing %q:\n%s", want, v)
+		}
+	}
+	if w, h := lipgloss.Width(v), lipgloss.Height(v); w > 120 || h > 30 {
+		t.Errorf("view is %dx%d, terminal 120x30:\n%s", w, h, v)
 	}
 	alpha := filepath.Join(d, "sshync", "repo", "hosts.d", "alpha.conf")
+	before := readFile(t, alpha)
 
+	// plain letters only search: i and F must not toggle anything
 	m.Update(keyMsg("i"))
-	if !strings.Contains(readFile(t, alpha), "IdentitiesOnly yes") {
-		t.Error("i did not toggle IdentitiesOnly")
-	}
 	m.Update(keyMsg("F"))
-	if !strings.Contains(readFile(t, alpha), "ForwardAgent no") {
-		t.Error("F did not toggle ForwardAgent")
+	if readFile(t, alpha) != before || m.search.Value() != "iF" {
+		t.Errorf("letters should go to the search, got %q", m.search.Value())
+	}
+	m.Update(keyMsg("esc"))
+	if m.search.Value() != "" || len(m.shown) != 2 {
+		t.Fatal("esc should clear the search")
 	}
 
-	m.Update(keyMsg("x"))
+	m.Update(keyMsg("tab"))
+	if strings.Contains(m.View(), "alpha.conf") {
+		t.Error("tab should hide the config pane")
+	}
+	m.Update(keyMsg("ctrl+o"))
+	if !m.expanded || !strings.Contains(m.View(), "HostName alpha.example.com") {
+		t.Error("ctrl+o should show the config full-screen")
+	}
+	m.Update(keyMsg("q"))
+	if m.expanded || m.search.Value() != "" {
+		t.Error("a key should close the full-screen view without typing")
+	}
+
+	m.Update(keyMsg("ctrl+d"))
 	m.Update(keyMsg("n"))
 	if !fileExists(alpha) {
 		t.Fatal("delete went ahead without y")
 	}
-	m.Update(keyMsg("x"))
+	m.Update(keyMsg("ctrl+d"))
 	m.Update(keyMsg("y"))
-	if fileExists(alpha) || len(m.list.Items()) != 1 {
-		t.Fatal("x y did not delete alpha")
+	if fileExists(alpha) || len(m.shown) != 1 {
+		t.Fatal("ctrl+d y did not delete alpha")
 	}
-	log, _ := gitsync.Repo{Dir: filepath.Join(d, "sshync", "repo")}.Git("log", "--format=%s", "-3")
-	if !strings.Contains(log, "remove alpha") || !strings.Contains(log, "ForwardAgent no") {
-		t.Errorf("picker edits not committed:\n%s", log)
+	log, _ := gitsync.Repo{Dir: filepath.Join(d, "sshync", "repo")}.Git("log", "--format=%s", "-1")
+	if !strings.Contains(log, "remove alpha") {
+		t.Errorf("delete not committed: %s", log)
 	}
 
 	_, cmd := m.Update(keyMsg("enter"))
@@ -180,26 +217,25 @@ func TestPicker(t *testing.T) {
 	}
 }
 
-func TestPickerFilter(t *testing.T) {
-	setupEnv(t)
-	d := machine(t, sample)
-	must(t, d, "init")
-	t.Setenv("SSHYNC_SSH_DIR", d)
-	a := &app{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}}
-	if err := a.open(); err != nil {
-		t.Fatal(err)
+func TestPickerSearch(t *testing.T) {
+	m, _ := newTestPicker(t, "bet", 80, 24)
+	if len(m.shown) != 1 || m.shown[0].Alias != "beta" {
+		t.Errorf("search arg: %v", m.shown)
 	}
-	m := newPicker(a, "bet")
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	if v := m.list.VisibleItems(); len(v) != 1 || v[0].(hostItem).e.Alias != "beta" {
-		t.Errorf("filter: %v", v)
+	m.Update(keyMsg("esc"))
+	for _, r := range "eis alpha" {
+		m.Update(keyMsg(string(r)))
 	}
-	// typing while filtering must not trigger actions
-	m.list.SetFilterText("")
-	m.Update(keyMsg("/"))
-	m.Update(keyMsg("i"))
-	if strings.Contains(readFile(t, filepath.Join(d, "sshync", "repo", "hosts.d", "alpha.conf")), "IdentitiesOnly") {
-		t.Error("key typed into the filter triggered a toggle")
+	if len(m.shown) != 1 || m.shown[0].Alias != "alpha" {
+		t.Errorf("all terms must match: %v", m.shown)
+	}
+	m.Update(keyMsg("esc"))
+	m.Update(keyMsg("down"))
+	if m.selectedAlias() != "beta" {
+		t.Errorf("down: %q", m.selectedAlias())
+	}
+	if w := lipgloss.Width(m.View()); w > 80 {
+		t.Errorf("view width %d at 80 columns", w)
 	}
 }
 

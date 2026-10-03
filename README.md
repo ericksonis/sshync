@@ -86,16 +86,18 @@ If the same host changed on both machines, `sync` aborts the rebase and leaves y
 
 ### Picker
 
-Run `sshync` with no arguments (or `sshync pick [filter]`) in a terminal to get a fuzzy host list with the selected host's block alongside.
+Run `sshync` with no arguments (or `sshync pick [search]`) in a terminal for a scrolling host table with the selected host's config underneath. Typing always searches (alias, hostname, user, key; every space-separated term must match), so actions are on ctrl keys and can't be triggered by accident.
 
 | Key | Action |
 |---|---|
-| `/` | filter by alias, hostname or user |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | move |
 | `enter` | `ssh` to the host |
-| `e` / `a` / `x` | edit in your editor / add a host / delete (asks `y`) |
-| `i` / `F` | toggle IdentitiesOnly / ForwardAgent |
-| `s` | sync |
-| `?` / `q` | all keys / quit |
+| `tab` / `ctrl+o` | show or hide the config pane / full-screen config |
+| `ctrl+e` / `ctrl+n` / `ctrl+d` | edit in your editor / add a host / delete (asks `y`) |
+| `ctrl+s` | sync |
+| `esc` / `ctrl+c` | clear the search, then quit / quit |
+
+Toggle options with `sshync toggle <alias> IdentitiesOnly`.
 
 ### Shell completion
 
