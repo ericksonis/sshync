@@ -74,14 +74,41 @@ sshync rename web1 web-01 ; sshync mv web-01 --to local ; sshync rm web-01
 sshync edit web1                    # $SSHYNC_EDITOR / $VISUAL / $EDITOR / notepad
 sshync edit --defaults
 sshync keys add work_laptop -       # paste a public key from Bitwarden: Get-Clipboard | sshync keys add work_laptop -
+sshync keys agent                   # pick public keys the running agent offers (ssh-add -L); --all for every new one
 sshync keys list
 sshync sync                         # commit, pull --rebase, push
-sshync doctor
+sshync doctor                       # --fix adds IdentitiesOnly yes wherever an IdentityFile is set
 ```
 
 By default each edit to the repo is committed automatically. Push happens on `sshync sync`, or after every edit if you set `autopush = true` under `[sync]` in `sshync.toml`.
 
 If the same host changed on both machines, `sync` aborts the rebase and leaves your files untouched, so ssh keeps working. Re-run with `--prefer mine` or `--prefer remote` to pick a side.
+
+### Picker
+
+Run `sshync` with no arguments (or `sshync pick [filter]`) in a terminal to get a fuzzy host list with the selected host's block alongside.
+
+| Key | Action |
+|---|---|
+| `/` | filter by alias, hostname or user |
+| `enter` | `ssh` to the host |
+| `e` / `a` / `x` | edit in your editor / add a host / delete (asks `y`) |
+| `i` / `F` | toggle IdentitiesOnly / ForwardAgent |
+| `s` | sync |
+| `?` / `q` | all keys / quit |
+
+### Shell completion
+
+Aliases, keywords, `IdentityFile` keys, yes/no values and existing forwards all complete.
+
+```powershell
+# PowerShell: add to $PROFILE
+sshync completion powershell | Out-String | Invoke-Expression
+```
+
+```bash
+source <(sshync completion bash)          # bash; zsh: sshync completion zsh; fish: sshync completion fish | source
+```
 
 ## Development
 

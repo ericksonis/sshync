@@ -88,30 +88,55 @@ func NewRoot() *cobra.Command {
 
 func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "sshync",
-		Short:         "Manage and sync your OpenSSH client config",
+		Use:   "sshync",
+		Short: "Manage and sync your OpenSSH client config",
+		Long: `Manage and sync your OpenSSH client config.
+
+Run without arguments in a terminal to open the host picker (same as ` + "`sshync pick`" + `).`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Name() == "init" || cmd.Name() == "help" || cmd.Name() == "version" ||
-				(cmd.Parent() != nil && cmd.Parent().Name() == "completion") || cmd.Name() == "completion" {
+			switch {
+			case cmd.Name() == "init", cmd.Name() == "help", cmd.Name() == "version",
+				cmd.Name() == "completion", cmd.Parent() != nil && cmd.Parent().Name() == "completion",
+				cmd.Name() == cobra.ShellCompRequestCmd, cmd.Name() == cobra.ShellCompNoDescRequestCmd:
 				return nil
+			case !cmd.HasParent() && !a.interactive:
+				return nil // plain `sshync` without a terminal prints help
 			}
 			return a.open()
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !a.interactive {
+				return cmd.Help()
+			}
+			return runPicker(a, "")
 		},
 	}
 	root.SetOut(a.out)
 	root.AddCommand(
 		initCmd(a), importCmd(a), addCmd(a), listCmd(a), showCmd(a),
 		setCmd(a), unsetCmd(a), toggleCmd(a), fwdCmd(a), rmCmd(a), mvCmd(a),
-		renameCmd(a), editCmd(a), keysCmd(a), syncCmd(a), doctorCmd(a),
+		renameCmd(a), editCmd(a), keysCmd(a), syncCmd(a), doctorCmd(a), pickCmd(a),
 	)
+	registerCompletions(a, root)
 	return root
 }
 
+// exitCode carries a child process's exit status (e.g. ssh) without an
+// extra error message.
+type exitCode int
+
+func (e exitCode) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
 func Execute() int {
 	if err := NewRoot().Execute(); err != nil {
+		var code exitCode
+		if errors.As(err, &code) {
+			return int(code)
+		}
 		fmt.Fprintln(os.Stderr, "sshync:", err)
 		if errors.Is(err, store.ErrNotInit) {
 			return 2

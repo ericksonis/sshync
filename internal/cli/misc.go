@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/ericksonis/sshync/internal/gitsync"
 	"github.com/ericksonis/sshync/internal/sshconf"
+	"github.com/ericksonis/sshync/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -92,7 +94,114 @@ func keysCmd(a *app) *cobra.Command {
 			a.changed(dst, "add key "+name)
 			return nil
 		},
-	})
+	}, keysAgentCmd(a))
+	return cmd
+}
+
+// agentKeys returns `ssh-add -L` output; a variable so tests can fake the agent.
+var agentKeys = func() (string, error) {
+	out, err := exec.Command("ssh-add", "-L").CombinedOutput()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return "", nil // "The agent has no identities."
+	}
+	if err != nil {
+		return "", fmt.Errorf("ssh-add -L: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+type agentKey struct{ name, line string }
+
+// newAgentKeys lists agent keys whose key material isn't already in the repo,
+// named after the key comment (Bitwarden uses the vault item name).
+func newAgentKeys(a *app, listing string) []agentKey {
+	have := map[string]bool{}
+	taken := map[string]bool{}
+	for _, k := range a.st.Keys() {
+		taken[strings.ToLower(k)] = true
+		if data, err := os.ReadFile(filepath.Join(a.paths.KeysDir, k)); err == nil {
+			if f := strings.Fields(string(data)); len(f) >= 2 {
+				have[f[1]] = true
+			}
+		}
+	}
+	var out []agentKey
+	for _, line := range strings.Split(listing, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || have[f[1]] {
+			continue
+		}
+		have[f[1]] = true
+		base := strings.TrimSuffix(strings.TrimSuffix(store.FileName(strings.Join(f[2:], " ")), ".conf"), ".pub")
+		if base == "_" {
+			base = strings.TrimPrefix(f[0], "ssh-") + "-" + f[1][max(0, len(f[1])-8):]
+		}
+		name := base + ".pub"
+		for i := 2; taken[strings.ToLower(name)]; i++ {
+			name = fmt.Sprintf("%s-%d.pub", base, i)
+		}
+		taken[strings.ToLower(name)] = true
+		out = append(out, agentKey{name, strings.TrimSpace(line)})
+	}
+	return out
+}
+
+func keysAgentCmd(a *app) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:     "agent",
+		Aliases: []string{"pull"},
+		Short:   "Add public keys from the running ssh-agent (e.g. Bitwarden) to the repo",
+		Long: `Reads public keys from the ssh-agent (ssh-add -L) and adds the ones not yet in
+the repo, named after each key's comment. Only public keys are ever read; the
+agent does not hand out private keys.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			listing, err := agentKeys()
+			if err != nil {
+				return err
+			}
+			cands := newAgentKeys(a, listing)
+			if len(cands) == 0 {
+				a.printf("no new keys in the agent\n")
+				return nil
+			}
+			chosen := cands
+			if !all {
+				if !a.interactive {
+					for _, c := range cands {
+						a.printf("%s\n", c.name)
+					}
+					return errors.New("pass --all to add these, or run in a terminal to pick")
+				}
+				opts := make([]huh.Option[int], len(cands))
+				for i, c := range cands {
+					opts[i] = huh.NewOption(c.name, i)
+				}
+				var picked []int
+				if err := huh.NewMultiSelect[int]().Title("Add which keys to the repo?").
+					Options(opts...).Value(&picked).Height(min(len(cands)+2, 20)).Run(); err != nil {
+					return err
+				}
+				chosen = nil
+				for _, i := range picked {
+					chosen = append(chosen, cands[i])
+				}
+			}
+			for _, c := range chosen {
+				if err := writePub([]byte(c.line), filepath.Join(a.paths.KeysDir, c.name)); err != nil {
+					return fmt.Errorf("%s: %w", c.name, err)
+				}
+				a.printf("added %s\n", a.paths.KeyRef(c.name))
+			}
+			if len(chosen) > 0 {
+				a.changed(a.paths.KeysDir, fmt.Sprintf("add %d key(s) from agent", len(chosen)))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "add every new key without asking")
 	return cmd
 }
 
@@ -117,10 +226,11 @@ func syncCmd(a *app) *cobra.Command {
 }
 
 func doctorCmd(a *app) *cobra.Command {
-	return &cobra.Command{
-		Use: "doctor", Short: "Check the setup for common problems", Args: cobra.NoArgs,
+	var fix bool
+	cmd := &cobra.Command{
+		Use: "doctor", Short: "Check the setup for common problems (--fix adds missing IdentitiesOnly yes)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			problems := 0
+			problems, fixed := 0, 0
 			warn := func(format string, args ...any) {
 				problems++
 				a.printf("! "+format+"\n", args...)
@@ -153,14 +263,28 @@ func doctorCmd(a *app) *cobra.Command {
 						a.printf("i %s: IdentityFile %s is a private key file on this machine; it must exist on every machine (or point at a .pub held by the agent)\n", e.Alias, f)
 					}
 				}
-				if len(ids) > 0 && !strings.EqualFold(e.Block.First("IdentitiesOnly"), "yes") {
-					warn("%s: has IdentityFile but not IdentitiesOnly yes (the agent may offer every key) -> sshync toggle %s IdentitiesOnly", e.Alias, e.Alias)
+				switch idOnly := strings.ToLower(e.Block.First("IdentitiesOnly")); {
+				case len(ids) == 0 || idOnly == "yes":
+				case idOnly == "no":
+					a.printf("i %s: IdentitiesOnly no is set explicitly; the agent may offer every key\n", e.Alias)
+				case fix:
+					e.Block.Set("IdentitiesOnly", "yes")
+					if err := a.st.Save(e); err != nil {
+						return err
+					}
+					fixed++
+				default:
+					warn("%s: has IdentityFile but not IdentitiesOnly yes (the agent may offer every key); fix all with `sshync doctor --fix`", e.Alias)
 				}
 				for _, l := range e.Block.Body {
 					if l.Kind == sshconf.KV && !sshconf.KnownKey(l.Key) {
 						warn("%s: unknown keyword %s", e.Alias, l.Key)
 					}
 				}
+			}
+			if fixed > 0 {
+				a.printf("added IdentitiesOnly yes to %d host(s)\n", fixed)
+				a.changed(a.paths.HostsDir, fmt.Sprintf("doctor: IdentitiesOnly yes on %d host(s)", fixed))
 			}
 			if st, err := a.repo().Status(); err != nil {
 				warn("git: %v", err)
@@ -185,6 +309,8 @@ func doctorCmd(a *app) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "add IdentitiesOnly yes to hosts that have an IdentityFile but no IdentitiesOnly line")
+	return cmd
 }
 
 func expandHome(p string) string {

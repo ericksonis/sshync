@@ -105,19 +105,11 @@ func toggleCmd(a *app) *cobra.Command {
 			if err != nil {
 				return "", err
 			}
-			cur := strings.ToLower(e.Block.First(k))
-			if cur != "" && cur != "yes" && cur != "no" {
-				return "", fmt.Errorf("%s is %q, not yes/no; use `sshync set`", k, cur)
+			v, changed, err := toggle(e, k, on, off)
+			if err != nil {
+				return "", err
 			}
-			v := "yes"
-			switch {
-			case on:
-			case off:
-				v = "no"
-			case cur == "yes":
-				v = "no"
-			}
-			if !e.Block.Set(k, v) {
+			if !changed {
 				a.printf("%s: %s already %s\n", e.Alias, k, v)
 				return "", nil
 			}
@@ -127,6 +119,23 @@ func toggleCmd(a *app) *cobra.Command {
 	cmd.Flags().BoolVar(&off, "off", false, "force no")
 	cmd.MarkFlagsMutuallyExclusive("on", "off")
 	return cmd
+}
+
+// toggle flips (or with on/off forces) a yes/no option; unset counts as no.
+func toggle(e *store.Entry, k string, on, off bool) (v string, changed bool, err error) {
+	cur := strings.ToLower(e.Block.First(k))
+	if cur != "" && cur != "yes" && cur != "no" {
+		return "", false, fmt.Errorf("%s is %q, not yes/no; use `sshync set`", k, cur)
+	}
+	v = "yes"
+	switch {
+	case on:
+	case off:
+		v = "no"
+	case cur == "yes":
+		v = "no"
+	}
+	return v, e.Block.Set(k, v), nil
 }
 
 // forwardValue converts ssh -L/-R syntax ([bind:]port:host:hostport) into
