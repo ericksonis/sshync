@@ -62,3 +62,24 @@ var repeatable = map[string]bool{
 // Repeatable reports whether ssh accepts the keyword multiple times, with
 // every occurrence taking effect.
 func Repeatable(key string) bool { return repeatable[strings.ToLower(key)] }
+
+// Keywords returns the settable client keywords (no Host/Match, no deprecated aliases).
+func Keywords() []string {
+	var out []string
+	for _, k := range keywords {
+		switch k {
+		case "Host", "Match", "PubkeyAcceptedKeyTypes", "HostbasedKeyTypes", "ChallengeResponseAuthentication":
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// YesNo lists commonly toggled keywords whose value is yes or no.
+var YesNo = []string{
+	"IdentitiesOnly", "ForwardAgent", "ForwardX11", "ForwardX11Trusted", "Compression",
+	"BatchMode", "CheckHostIP", "ClearAllForwardings", "ExitOnForwardFailure",
+	"GatewayPorts", "GSSAPIAuthentication", "HashKnownHosts", "PasswordAuthentication",
+	"PubkeyAuthentication", "TCPKeepAlive", "VisualHostKey", "KbdInteractiveAuthentication",
+}
